@@ -1,0 +1,48 @@
+[package]
+name = "mockingbird"
+version = "0.1.0"
+edition = "2021"
+description = "HTTP request recorder and replayer for deterministic tests"
+license = "MIT"
+authors = ["Katie"]
+keywords = ["http", "testing", "mock", "vcr", "cassette"]
+categories = ["development-tools::testing", "web-programming::http-client"]
+
+[lib]
+name = "mockingbird"
+path = "src/lib.rs"
+
+[[bin]]
+name = "mockingbird"
+path = "src/main.rs"
+
+[dependencies]
+reqwest = { version = "0.12", features = ["json", "gzip", "brotli"] }
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_urlencoded = "0.7"
+chrono = { version = "0.4", features = ["serde"] }
+bytes = "1"
+hyper = { version = "1", features = ["server", "http1"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
+http-body-util = "0.1"
+clap = { version = "4", features = ["derive"] }
+thiserror = "1"
+tracing = "0.1"
+url = "2"
+base64 = "0.22"
+regex = "1"
+
+[dev-dependencies]
+tokio-test = "0.4"
+tempfile = "3"
+tracing-subscriber = "0.3"
+
+[features]
+default = []
+yaml = ["serde_yaml"]
+
+[dependencies.serde_yaml]
+version = "0.9"
+optional = true

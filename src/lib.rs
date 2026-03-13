@@ -1,0 +1,13 @@
+//! mockingbird - HTTP request recorder and replayer for deterministic tests.
+//!
+//! Record real API responses once, replay them forever. No more flaky tests
+//! from external APIs.
+
+pub mod cassette;
+pub mod error;
+pub mod filter;
+pub mod matcher;
+pub mod mode;
+
+pub use error::{Error, Result};
+pub use mode::Mode;
