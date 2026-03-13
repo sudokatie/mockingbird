@@ -8,6 +8,10 @@ pub mod error;
 pub mod filter;
 pub mod matcher;
 pub mod mode;
+pub mod request;
+pub mod response;
 
 pub use error::{Error, Result};
 pub use mode::Mode;
+pub use request::Request;
+pub use response::Response;
