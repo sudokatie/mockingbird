@@ -38,6 +38,7 @@ impl Cassette {
     }
     
     /// Add an interaction to the cassette.
+    #[allow(clippy::should_implement_trait)]
     pub fn add(&mut self, interaction: Interaction) {
         self.interactions.push(interaction);
         self.modified_at = Utc::now();

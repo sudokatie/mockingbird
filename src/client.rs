@@ -40,22 +40,22 @@ impl Client {
     }
     
     /// Create a GET request.
-    pub fn get(&self, url: impl Into<String>) -> RequestBuilder {
+    pub fn get(&self, url: impl Into<String>) -> RequestBuilder<'_> {
         RequestBuilder::new(self, Request::get(url))
     }
     
     /// Create a POST request.
-    pub fn post(&self, url: impl Into<String>) -> RequestBuilder {
+    pub fn post(&self, url: impl Into<String>) -> RequestBuilder<'_> {
         RequestBuilder::new(self, Request::post(url))
     }
     
     /// Create a PUT request.
-    pub fn put(&self, url: impl Into<String>) -> RequestBuilder {
+    pub fn put(&self, url: impl Into<String>) -> RequestBuilder<'_> {
         RequestBuilder::new(self, Request::put(url))
     }
     
     /// Create a DELETE request.
-    pub fn delete(&self, url: impl Into<String>) -> RequestBuilder {
+    pub fn delete(&self, url: impl Into<String>) -> RequestBuilder<'_> {
         RequestBuilder::new(self, Request::delete(url))
     }
     

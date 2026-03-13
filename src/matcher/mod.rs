@@ -124,6 +124,7 @@ impl AllMatcher {
     }
     
     /// Add a matcher.
+    #[allow(clippy::should_implement_trait)]
     pub fn add(mut self, matcher: impl Matcher + 'static) -> Self {
         self.matchers.push(Box::new(matcher));
         self
