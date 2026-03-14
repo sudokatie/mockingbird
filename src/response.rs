@@ -54,9 +54,14 @@ impl Response {
         }
     }
     
-    /// Get the status code.
+    /// Get the status code as u16.
     pub fn status(&self) -> u16 {
         self.status
+    }
+    
+    /// Get the status code as reqwest::StatusCode.
+    pub fn status_code(&self) -> reqwest::StatusCode {
+        reqwest::StatusCode::from_u16(self.status).unwrap_or(reqwest::StatusCode::OK)
     }
     
     /// Check if status is success (2xx).
@@ -139,6 +144,15 @@ mod tests {
         let resp = Response::new(404, "Not Found");
         assert_eq!(resp.status(), 404);
         assert!(!resp.is_success());
+    }
+
+    #[test]
+    fn test_status_code() {
+        let resp = Response::new(201, "Created");
+        assert_eq!(resp.status_code(), reqwest::StatusCode::CREATED);
+        
+        let resp2 = Response::new(404, "Not Found");
+        assert_eq!(resp2.status_code(), reqwest::StatusCode::NOT_FOUND);
     }
 
     #[test]

@@ -141,7 +141,16 @@ async fn handle_playback(
     
     for interaction in &cassette.interactions {
         if state.matcher.matches(&interaction.request, &recorded_request) {
-            return recorded_to_hyper(&interaction.response);
+            // Handle error interactions
+            if interaction.is_error() {
+                if let Some(err) = &interaction.error {
+                    return Err(Error::Proxy(format!("Recorded error: {}", err.message)));
+                }
+            }
+            // Handle successful interactions
+            if let Some(response) = &interaction.response {
+                return recorded_to_hyper(response);
+            }
         }
     }
     
@@ -193,7 +202,16 @@ async fn handle_auto(
         for interaction in &cassette.interactions {
             if state.matcher.matches(&interaction.request, &recorded_request) {
                 println!("Replaying: {} {}", recorded_request.method, recorded_request.url);
-                return recorded_to_hyper(&interaction.response);
+                // Handle error interactions
+                if interaction.is_error() {
+                    if let Some(err) = &interaction.error {
+                        return Err(Error::Proxy(format!("Recorded error: {}", err.message)));
+                    }
+                }
+                // Handle successful interactions
+                if let Some(response) = &interaction.response {
+                    return recorded_to_hyper(response);
+                }
             }
         }
     }
@@ -338,9 +356,16 @@ async fn forward_request(
     
     // Convert to recorded response
     let status = response.status().as_u16();
+    
+    // Strip transport-layer headers that are modified by decompression
+    const HEADERS_TO_STRIP: &[&str] = &["content-encoding", "transfer-encoding", "content-length"];
     let headers: Vec<Header> = response
         .headers()
         .iter()
+        .filter(|(k, _)| {
+            let name = k.as_str().to_lowercase();
+            !HEADERS_TO_STRIP.contains(&name.as_str())
+        })
         .map(|(k, v)| Header::new(k.as_str(), v.to_str().unwrap_or("")))
         .collect();
     

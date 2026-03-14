@@ -453,6 +453,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "glob"
+version = "0.3.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0cc23270f6e1808e30a928bdc84dea0b9b4136a8bc82338574f23baf47bbd280"
+
+[[package]]
 name = "h2"
 version = "0.4.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -885,9 +891,11 @@ dependencies = [
  "bytes",
  "chrono",
  "clap",
+ "glob",
  "http-body-util",
  "hyper",
  "hyper-util",
+ "mockingbird-macros",
  "regex",
  "reqwest",
  "serde",
@@ -901,6 +909,15 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "url",
+]
+
+[[package]]
+name = "mockingbird-macros"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
 ]
 
 [[package]]

@@ -5,6 +5,7 @@
 use crate::cassette::{BodyEncoding, Header, RecordedRequest};
 use bytes::Bytes;
 use std::collections::HashMap;
+use std::time::Duration;
 
 /// HTTP request builder.
 #[derive(Debug, Clone)]
@@ -13,6 +14,7 @@ pub struct Request {
     url: String,
     headers: HashMap<String, String>,
     body: Option<Bytes>,
+    timeout: Option<Duration>,
 }
 
 impl Request {
@@ -41,6 +43,11 @@ impl Request {
         Self::new("PATCH", url)
     }
     
+    /// Create a new HEAD request.
+    pub fn head(url: impl Into<String>) -> Self {
+        Self::new("HEAD", url)
+    }
+    
     /// Create a new request with any method.
     pub fn new(method: impl Into<String>, url: impl Into<String>) -> Self {
         Self {
@@ -48,12 +55,21 @@ impl Request {
             url: url.into(),
             headers: HashMap::new(),
             body: None,
+            timeout: None,
         }
     }
     
     /// Add a header.
     pub fn header(mut self, name: impl Into<String>, value: impl Into<String>) -> Self {
         self.headers.insert(name.into().to_lowercase(), value.into());
+        self
+    }
+    
+    /// Add multiple headers from a HashMap.
+    pub fn with_headers(mut self, headers: HashMap<String, String>) -> Self {
+        for (k, v) in headers {
+            self.headers.insert(k.to_lowercase(), v);
+        }
         self
     }
     
@@ -69,6 +85,35 @@ impl Request {
             self.body = Some(Bytes::from(json));
             self.headers.insert("content-type".to_string(), "application/json".to_string());
         }
+        self
+    }
+    
+    /// Set the body as form data.
+    pub fn form<T: serde::Serialize>(mut self, value: &T) -> Self {
+        if let Ok(form) = serde_urlencoded::to_string(value) {
+            self.body = Some(Bytes::from(form));
+            self.headers.insert("content-type".to_string(), "application/x-www-form-urlencoded".to_string());
+        }
+        self
+    }
+    
+    /// Add query parameters to the URL.
+    pub fn query<T: serde::Serialize>(mut self, params: &T) -> Self {
+        if let Ok(query_string) = serde_urlencoded::to_string(params) {
+            if !query_string.is_empty() {
+                if self.url.contains('?') {
+                    self.url = format!("{}&{}", self.url, query_string);
+                } else {
+                    self.url = format!("{}?{}", self.url, query_string);
+                }
+            }
+        }
+        self
+    }
+    
+    /// Set the request timeout.
+    pub fn timeout(mut self, timeout: Duration) -> Self {
+        self.timeout = Some(timeout);
         self
     }
     
@@ -95,6 +140,11 @@ impl Request {
     /// Get the body.
     pub fn get_body(&self) -> Option<&Bytes> {
         self.body.as_ref()
+    }
+    
+    /// Get the timeout.
+    pub fn get_timeout(&self) -> Option<Duration> {
+        self.timeout
     }
     
     /// Convert to a RecordedRequest for matching/storage.
@@ -148,6 +198,7 @@ impl Request {
             url: recorded.url.clone(),
             headers,
             body,
+            timeout: None,
         }
     }
 }
@@ -242,5 +293,70 @@ mod tests {
         assert_eq!(Request::put("u").method(), "PUT");
         assert_eq!(Request::delete("u").method(), "DELETE");
         assert_eq!(Request::patch("u").method(), "PATCH");
+        assert_eq!(Request::head("u").method(), "HEAD");
+    }
+
+    #[test]
+    fn test_form() {
+        #[derive(serde::Serialize)]
+        struct Login {
+            username: String,
+            password: String,
+        }
+        
+        let login = Login {
+            username: "alice".to_string(),
+            password: "secret".to_string(),
+        };
+        
+        let req = Request::post("https://example.com/login").form(&login);
+        
+        assert_eq!(req.get_header("content-type"), Some("application/x-www-form-urlencoded"));
+        let body = req.get_body().unwrap();
+        let body_str = String::from_utf8_lossy(body);
+        assert!(body_str.contains("username=alice"));
+        assert!(body_str.contains("password=secret"));
+    }
+
+    #[test]
+    fn test_query() {
+        let req = Request::get("https://example.com/search")
+            .query(&[("q", "rust"), ("page", "1")]);
+        
+        assert!(req.url().contains("q=rust"));
+        assert!(req.url().contains("page=1"));
+    }
+
+    #[test]
+    fn test_query_appends_to_existing() {
+        let req = Request::get("https://example.com/search?existing=yes")
+            .query(&[("added", "true")]);
+        
+        assert!(req.url().contains("existing=yes"));
+        assert!(req.url().contains("added=true"));
+        assert!(req.url().contains("&"));
+    }
+
+    #[test]
+    fn test_timeout() {
+        use std::time::Duration;
+        
+        let req = Request::get("https://example.com")
+            .timeout(Duration::from_secs(30));
+        
+        assert_eq!(req.get_timeout(), Some(Duration::from_secs(30)));
+    }
+
+    #[test]
+    fn test_with_headers() {
+        let mut headers = HashMap::new();
+        headers.insert("X-Custom".to_string(), "value1".to_string());
+        headers.insert("X-Another".to_string(), "value2".to_string());
+        
+        let req = Request::get("https://example.com")
+            .with_headers(headers);
+        
+        assert_eq!(req.get_header("x-custom"), Some("value1"));
+        assert_eq!(req.get_header("x-another"), Some("value2"));
     }
 }

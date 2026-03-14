@@ -16,7 +16,11 @@ path = "src/lib.rs"
 name = "mockingbird"
 path = "src/main.rs"
 
+[workspace]
+members = [".", "mockingbird-macros"]
+
 [dependencies]
+mockingbird-macros = { path = "mockingbird-macros" }
 reqwest = { version = "0.12", features = ["json", "gzip", "brotli"] }
 tokio = { version = "1", features = ["full"] }
 serde = { version = "1", features = ["derive"] }
@@ -33,6 +37,7 @@ tracing = "0.1"
 url = "2"
 base64 = "0.22"
 regex = "1"
+glob = "0.3"
 
 [dev-dependencies]
 tokio-test = "0.4"
