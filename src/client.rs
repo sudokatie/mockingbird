@@ -159,7 +159,10 @@ impl Client {
                                 });
                             }
                         }
-                        return self.interaction_to_response(interaction);
+                        let accept_encoding = recorded_request.headers.iter()
+                            .find(|h| h.name.eq_ignore_ascii_case("accept-encoding"))
+                            .map(|h| h.value.as_str());
+                        return self.interaction_to_response(interaction, accept_encoding);
                     }
                 }
             }
@@ -178,7 +181,10 @@ impl Client {
                         });
                     }
                 }
-                return self.interaction_to_response(interaction);
+                let accept_encoding = recorded_request.headers.iter()
+                    .find(|h| h.name.eq_ignore_ascii_case("accept-encoding"))
+                    .map(|h| h.value.as_str());
+                return self.interaction_to_response(interaction, accept_encoding);
             }
         }
         
@@ -186,15 +192,19 @@ impl Client {
     }
     
     /// Convert an interaction to a response, handling both success and error cases.
-    fn interaction_to_response(&self, interaction: &Interaction) -> Result<Response> {
+    /// Applies recompression if accept_encoding is provided and matches a supported encoding.
+    fn interaction_to_response(&self, interaction: &Interaction, accept_encoding: Option<&str>) -> Result<Response> {
         // Check for error interaction first
         if let Some(error) = &interaction.error {
             return Err(Self::recorded_error_to_error(error));
         }
         
-        // Return the response if present
+        // Return the response if present, with optional recompression
         match &interaction.response {
-            Some(response) => Ok(Response::from_recorded(response.clone())),
+            Some(response) => {
+                let resp = Response::from_recorded(response.clone());
+                Ok(resp.with_compression(accept_encoding))
+            }
             None => Err(Error::InvalidFormat("Interaction has no response or error".to_string())),
         }
     }

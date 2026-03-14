@@ -95,6 +95,64 @@ impl Response {
         serde_json::from_slice(&self.body).map_err(Error::from)
     }
     
+    /// Apply compression based on Accept-Encoding header.
+    /// 
+    /// If the accept_encoding contains a supported encoding (gzip, deflate),
+    /// compresses the body and sets the Content-Encoding header.
+    /// Returns self unchanged if no supported encoding is requested.
+    pub fn with_compression(mut self, accept_encoding: Option<&str>) -> Self {
+        let Some(accept) = accept_encoding else {
+            return self;
+        };
+        
+        // Skip if body is empty or already compressed
+        if self.body.is_empty() || self.headers.contains_key("content-encoding") {
+            return self;
+        }
+        
+        // Parse Accept-Encoding and find best match
+        // Supports: gzip, deflate (not brotli - would need another dep)
+        let accept_lower = accept.to_lowercase();
+        
+        if accept_lower.contains("gzip") {
+            if let Some(compressed) = self.compress_gzip() {
+                self.body = compressed;
+                self.headers.insert("content-encoding".to_string(), "gzip".to_string());
+            }
+        } else if accept_lower.contains("deflate") {
+            if let Some(compressed) = self.compress_deflate() {
+                self.body = compressed;
+                self.headers.insert("content-encoding".to_string(), "deflate".to_string());
+            }
+        }
+        
+        self
+    }
+    
+    /// Compress body with gzip.
+    fn compress_gzip(&self) -> Option<Bytes> {
+        use flate2::write::GzEncoder;
+        use flate2::Compression;
+        use std::io::Write;
+        
+        let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+        encoder.write_all(&self.body).ok()?;
+        let compressed = encoder.finish().ok()?;
+        Some(Bytes::from(compressed))
+    }
+    
+    /// Compress body with deflate.
+    fn compress_deflate(&self) -> Option<Bytes> {
+        use flate2::write::DeflateEncoder;
+        use flate2::Compression;
+        use std::io::Write;
+        
+        let mut encoder = DeflateEncoder::new(Vec::new(), Compression::default());
+        encoder.write_all(&self.body).ok()?;
+        let compressed = encoder.finish().ok()?;
+        Some(Bytes::from(compressed))
+    }
+    
     /// Convert to a RecordedResponse for storage.
     pub fn to_recorded(&self) -> RecordedResponse {
         let (body, encoding) = if self.body.is_empty() {
@@ -225,5 +283,73 @@ mod tests {
         
         assert!(resp.bytes().is_empty());
         assert_eq!(resp.text().unwrap(), "");
+    }
+    
+    #[test]
+    fn test_with_compression_gzip() {
+        use flate2::read::GzDecoder;
+        use std::io::Read;
+        
+        let resp = Response::new(200, "Hello, World!");
+        let compressed = resp.with_compression(Some("gzip, deflate"));
+        
+        // Should have content-encoding header
+        assert_eq!(compressed.header("content-encoding"), Some("gzip"));
+        
+        // Body should be compressed (different from original)
+        let compressed_bytes = compressed.bytes();
+        assert_ne!(compressed_bytes, Bytes::from("Hello, World!"));
+        
+        // Should decompress to original
+        let mut decoder = GzDecoder::new(compressed_bytes.as_ref());
+        let mut decompressed = String::new();
+        decoder.read_to_string(&mut decompressed).unwrap();
+        assert_eq!(decompressed, "Hello, World!");
+    }
+    
+    #[test]
+    fn test_with_compression_deflate() {
+        use flate2::read::DeflateDecoder;
+        use std::io::Read;
+        
+        let resp = Response::new(200, "Hello, Deflate!");
+        let compressed = resp.with_compression(Some("deflate"));
+        
+        assert_eq!(compressed.header("content-encoding"), Some("deflate"));
+        
+        let compressed_bytes = compressed.bytes();
+        let mut decoder = DeflateDecoder::new(compressed_bytes.as_ref());
+        let mut decompressed = String::new();
+        decoder.read_to_string(&mut decompressed).unwrap();
+        assert_eq!(decompressed, "Hello, Deflate!");
+    }
+    
+    #[test]
+    fn test_with_compression_none() {
+        let resp = Response::new(200, "No compression");
+        let same = resp.clone().with_compression(None);
+        
+        assert!(same.header("content-encoding").is_none());
+        assert_eq!(same.bytes(), Bytes::from("No compression"));
+    }
+    
+    #[test]
+    fn test_with_compression_unsupported() {
+        let resp = Response::new(200, "Brotli not supported");
+        let same = resp.clone().with_compression(Some("br"));
+        
+        // Should not compress with unsupported encoding
+        assert!(same.header("content-encoding").is_none());
+        assert_eq!(same.bytes(), Bytes::from("Brotli not supported"));
+    }
+    
+    #[test]
+    fn test_with_compression_empty_body() {
+        let resp = Response::new(204, Bytes::new());
+        let same = resp.with_compression(Some("gzip"));
+        
+        // Should not compress empty body
+        assert!(same.header("content-encoding").is_none());
+        assert!(same.bytes().is_empty());
     }
 }

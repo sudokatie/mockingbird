@@ -891,6 +891,7 @@ dependencies = [
  "bytes",
  "chrono",
  "clap",
+ "flate2",
  "glob",
  "http-body-util",
  "hyper",
