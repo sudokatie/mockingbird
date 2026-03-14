@@ -39,7 +39,7 @@ pub mod response;
 
 pub use client::{Client, ClientBuilder};
 pub use error::{Error, Result};
-pub use middleware::{MockingbirdLayer, LayerBuilder};
+pub use middleware::{MockingbirdLayer, LayerBuilder, PlaybackResult};
 pub use mode::Mode;
 pub use proxy::{run as run_proxy, ProxyConfig};
 pub use request::Request;

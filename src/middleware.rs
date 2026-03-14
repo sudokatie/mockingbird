@@ -3,9 +3,18 @@
 //! This module provides a Tower-style layer that can wrap existing
 //! reqwest clients to add recording/playback functionality.
 
-use crate::cassette::{Cassette, Interaction, RecordedRequest, RecordedResponse, Header, BodyEncoding};
+use crate::cassette::{Cassette, Interaction, RecordedRequest, RecordedResponse, RecordedError, ErrorKind, Header, BodyEncoding};
 use crate::cassette::{load_cassette, save_cassette};
 use crate::error::{Error, Result};
+
+/// Result of attempting to playback a recorded interaction.
+#[derive(Debug, Clone)]
+pub enum PlaybackResult {
+    /// A successful recorded response.
+    Response(RecordedResponse),
+    /// A recorded error to replay.
+    Error(RecordedError),
+}
 use crate::filter::{RequestFilter, ResponseFilter};
 use crate::matcher::{AllMatcher, Matcher};
 use crate::mode::Mode;
@@ -44,8 +53,12 @@ impl MockingbirdLayer {
         LayerBuilder::new(cassette_path).mode(Mode::Auto)
     }
     
-    /// Try to find a matching recorded response for a request.
-    pub fn try_playback(&self, request: &RecordedRequest) -> Result<Option<RecordedResponse>> {
+    /// Try to find a matching recorded interaction for a request.
+    /// 
+    /// Returns `Ok(Some(PlaybackResult::Response(...)))` for successful responses,
+    /// `Ok(Some(PlaybackResult::Error(...)))` for recorded errors,
+    /// or `Ok(None)` if no match is found.
+    pub fn try_playback(&self, request: &RecordedRequest) -> Result<Option<PlaybackResult>> {
         let mut filtered_request = request.clone();
         for filter in &self.request_filters {
             filter.filter(&mut filtered_request);
@@ -66,15 +79,40 @@ impl MockingbirdLayer {
                         });
                     }
                 }
-                // Only return successful interactions
+                // Return successful response if present
                 if let Some(response) = &interaction.response {
-                    return Ok(Some(response.clone()));
+                    return Ok(Some(PlaybackResult::Response(response.clone())));
                 }
-                // TODO: Handle error interactions in middleware if needed
+                // Return recorded error if present
+                if let Some(error) = &interaction.error {
+                    return Ok(Some(PlaybackResult::Error(error.clone())));
+                }
             }
         }
         
         Ok(None)
+    }
+    
+    /// Convert a PlaybackResult to a Result, returning the response or error.
+    /// 
+    /// Use this to convert a recorded error back into an actual Error.
+    pub fn playback_result_to_response(&self, result: PlaybackResult) -> Result<RecordedResponse> {
+        match result {
+            PlaybackResult::Response(response) => Ok(response),
+            PlaybackResult::Error(error) => Err(Self::recorded_error_to_error(&error)),
+        }
+    }
+    
+    /// Convert a RecordedError to an Error for replay.
+    fn recorded_error_to_error(error: &RecordedError) -> Error {
+        match error.kind {
+            ErrorKind::Timeout => Error::RecordedTimeout { message: error.message.clone() },
+            ErrorKind::Connection => Error::RecordedConnection { message: error.message.clone() },
+            ErrorKind::Dns => Error::RecordedDns { message: error.message.clone() },
+            ErrorKind::Tls => Error::RecordedTls { message: error.message.clone() },
+            ErrorKind::Cancelled => Error::RecordedCancelled { message: error.message.clone() },
+            ErrorKind::Unknown => Error::RecordedUnknown { message: error.message.clone() },
+        }
     }
     
     /// Record a new interaction.
@@ -126,15 +164,23 @@ impl MockingbirdLayer {
     /// 
     /// Returns `Some(response)` if a cached response was found (playback mode),
     /// or `None` if the request should be forwarded to the real server.
+    /// 
+    /// If a recorded error is found, it will be returned as an `Err`.
     pub fn process_request(&self, request: &RecordedRequest) -> Result<Option<RecordedResponse>> {
         match self.mode {
             Mode::Replay => {
-                self.try_playback(request)?
-                    .ok_or(Error::NoMatch)
-                    .map(Some)
+                match self.try_playback(request)? {
+                    Some(PlaybackResult::Response(response)) => Ok(Some(response)),
+                    Some(PlaybackResult::Error(error)) => Err(Self::recorded_error_to_error(&error)),
+                    None => Err(Error::NoMatch),
+                }
             }
             Mode::Auto => {
-                self.try_playback(request)
+                match self.try_playback(request)? {
+                    Some(PlaybackResult::Response(response)) => Ok(Some(response)),
+                    Some(PlaybackResult::Error(error)) => Err(Self::recorded_error_to_error(&error)),
+                    None => Ok(None),
+                }
             }
             Mode::Record | Mode::Passthrough => {
                 Ok(None)
@@ -347,9 +393,13 @@ mod tests {
             let result = layer.try_playback(&req).unwrap();
             
             assert!(result.is_some());
-            let resp = result.unwrap();
-            assert_eq!(resp.status, 200);
-            assert_eq!(resp.body, Some("recorded".to_string()));
+            match result.unwrap() {
+                PlaybackResult::Response(resp) => {
+                    assert_eq!(resp.status, 200);
+                    assert_eq!(resp.body, Some("recorded".to_string()));
+                }
+                PlaybackResult::Error(_) => panic!("expected response, got error"),
+            }
         }
     }
 
@@ -397,5 +447,40 @@ mod tests {
         // Auto mode returns None when no match (should forward)
         let result = layer.process_request(&req).unwrap();
         assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_error_interaction_playback() {
+        use crate::cassette::RecordedError;
+        
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("test.json");
+        
+        // Create cassette with error interaction
+        let mut cassette = Cassette::new();
+        cassette.add(Interaction::error(
+            RecordedRequest::new("GET", "https://timeout.example.com"),
+            RecordedError::timeout("connection timed out"),
+        ));
+        save_cassette(&path, &cassette).unwrap();
+        
+        let layer = MockingbirdLayer::playback(&path).build().unwrap();
+        let req = RecordedRequest::new("GET", "https://timeout.example.com");
+        
+        // try_playback should return the error
+        let result = layer.try_playback(&req).unwrap();
+        assert!(result.is_some());
+        match result.unwrap() {
+            PlaybackResult::Error(err) => {
+                assert_eq!(err.kind, ErrorKind::Timeout);
+                assert!(err.message.contains("timed out"));
+            }
+            PlaybackResult::Response(_) => panic!("expected error, got response"),
+        }
+        
+        // process_request should convert to Error
+        let result = layer.process_request(&req);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("timed out"));
     }
 }

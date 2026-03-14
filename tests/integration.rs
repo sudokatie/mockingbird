@@ -330,7 +330,12 @@ async fn test_middleware_layer() {
     let result = layer2.try_playback(&req2).unwrap();
     
     assert!(result.is_some());
-    assert_eq!(result.unwrap().body, Some("layer data".to_string()));
+    match result.unwrap() {
+        mockingbird::middleware::PlaybackResult::Response(resp) => {
+            assert_eq!(resp.body, Some("layer data".to_string()));
+        }
+        mockingbird::middleware::PlaybackResult::Error(_) => panic!("expected response"),
+    }
 }
 
 #[tokio::test]
