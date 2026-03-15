@@ -1,29 +1,10 @@
 //! Cassette file storage.
 
+use super::format::Format;
 use super::Cassette;
 use crate::error::{Error, Result};
 use std::fs;
 use std::path::Path;
-
-/// Supported cassette file formats.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Format {
-    /// JSON format (default).
-    Json,
-    /// YAML format (requires `yaml` feature).
-    Yaml,
-}
-
-impl Format {
-    /// Detect format from file extension.
-    pub fn from_path<P: AsRef<Path>>(path: P) -> Self {
-        let path = path.as_ref();
-        match path.extension().and_then(|e| e.to_str()) {
-            Some("yaml") | Some("yml") => Format::Yaml,
-            _ => Format::Json,
-        }
-    }
-}
 
 /// Load a cassette from a file.
 /// 
@@ -37,7 +18,10 @@ pub fn load_cassette<P: AsRef<Path>>(path: P) -> Result<Cassette> {
         return Err(Error::CassetteNotFound(path.display().to_string()));
     }
     
-    let content = fs::read_to_string(path)?;
+    let content = fs::read_to_string(path).map_err(|e| Error::CassetteRead {
+        path: path.to_path_buf(),
+        source: e,
+    })?;
     let format = Format::from_path(path);
     
     let cassette = match format {
@@ -70,7 +54,10 @@ pub fn save_cassette<P: AsRef<Path>>(path: P, cassette: &Cassette) -> Result<()>
     // Create parent directory if needed
     if let Some(parent) = path.parent() {
         if !parent.exists() {
-            fs::create_dir_all(parent)?;
+            fs::create_dir_all(parent).map_err(|e| Error::CassetteWrite {
+                path: path.to_path_buf(),
+                source: e,
+            })?;
         }
     }
     
@@ -94,8 +81,14 @@ pub fn save_cassette<P: AsRef<Path>>(path: P, cassette: &Cassette) -> Result<()>
     
     // Atomic write via temp file
     let tmp_path = path.with_extension("tmp");
-    fs::write(&tmp_path, &content)?;
-    fs::rename(&tmp_path, path)?;
+    fs::write(&tmp_path, &content).map_err(|e| Error::CassetteWrite {
+        path: path.to_path_buf(),
+        source: e,
+    })?;
+    fs::rename(&tmp_path, path).map_err(|e| Error::CassetteWrite {
+        path: path.to_path_buf(),
+        source: e,
+    })?;
     
     Ok(())
 }

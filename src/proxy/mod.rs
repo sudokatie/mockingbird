@@ -161,13 +161,21 @@ async fn handle_record(
     state: &ProxyState,
     req: Request<hyper::body::Incoming>,
 ) -> Result<Response<Full<Bytes>>> {
-    let target_url = state.target_url.as_ref()
-        .ok_or_else(|| Error::Config("Target URL required for record mode".into()))?;
-    
     let recorded_request = hyper_to_recorded(req).await?;
     
-    // Forward to target
-    let recorded_response = forward_request(&state.http_client, target_url, &recorded_request).await?;
+    // Use target URL from config, or require full URL in path
+    let target_url = state.target_url.as_ref().map(|s| s.as_str());
+    
+    // If URL is already fully qualified (from path extraction), we can use it directly
+    let is_full_url = recorded_request.url.starts_with("http://") || recorded_request.url.starts_with("https://");
+    if !is_full_url && target_url.is_none() {
+        return Err(Error::Config(
+            "Target URL required. Use --target or send requests to /https://target.com/path".into()
+        ));
+    }
+    
+    // Forward to target (use full URL from path, or build with target_url)
+    let recorded_response = forward_request_smart(&state.http_client, target_url, &recorded_request).await?;
     
     // Store interaction
     {
@@ -216,11 +224,16 @@ async fn handle_auto(
         }
     }
     
-    // Fall back to recording
-    let target_url = state.target_url.as_ref()
-        .ok_or_else(|| Error::Config("Target URL required for auto mode".into()))?;
+    // Fall back to recording - use target URL from config or require full URL in path
+    let target_url = state.target_url.as_ref().map(|s| s.as_str());
+    let is_full_url = recorded_request.url.starts_with("http://") || recorded_request.url.starts_with("https://");
+    if !is_full_url && target_url.is_none() {
+        return Err(Error::Config(
+            "Target URL required for recording. Use --target or send requests to /https://target.com/path".into()
+        ));
+    }
     
-    let recorded_response = forward_request(&state.http_client, target_url, &recorded_request).await?;
+    let recorded_response = forward_request_smart(&state.http_client, target_url, &recorded_request).await?;
     
     // Store interaction
     {
@@ -245,18 +258,49 @@ async fn handle_passthrough(
     state: &ProxyState,
     req: Request<hyper::body::Incoming>,
 ) -> Result<Response<Full<Bytes>>> {
-    let target_url = state.target_url.as_ref()
-        .ok_or_else(|| Error::Config("Target URL required for passthrough mode".into()))?;
-    
     let recorded_request = hyper_to_recorded(req).await?;
-    let recorded_response = forward_request(&state.http_client, target_url, &recorded_request).await?;
+    
+    let target_url = state.target_url.as_ref().map(|s| s.as_str());
+    let is_full_url = recorded_request.url.starts_with("http://") || recorded_request.url.starts_with("https://");
+    if !is_full_url && target_url.is_none() {
+        return Err(Error::Config(
+            "Target URL required. Use --target or send requests to /https://target.com/path".into()
+        ));
+    }
+    
+    let recorded_response = forward_request_smart(&state.http_client, target_url, &recorded_request).await?;
     
     recorded_to_hyper(&recorded_response)
 }
 
+/// Extract target URL from path if it contains a full URL.
+/// 
+/// Supports path-based URL extraction per spec:
+/// - `/https://api.example.com/users` -> `https://api.example.com/users`
+/// - `/http://api.example.com/users` -> `http://api.example.com/users`
+/// 
+/// Returns None if path doesn't contain a full URL.
+fn extract_url_from_path(path: &str) -> Option<String> {
+    // Remove leading slash and check for protocol
+    let trimmed = path.trim_start_matches('/');
+    if trimmed.starts_with("https://") || trimmed.starts_with("http://") {
+        Some(trimmed.to_string())
+    } else {
+        None
+    }
+}
+
 async fn hyper_to_recorded(req: Request<hyper::body::Incoming>) -> Result<RecordedRequest> {
     let method = req.method().to_string();
-    let url = req.uri().to_string();
+    let uri = req.uri();
+    
+    // Try to extract full URL from path (per spec section 8.4)
+    // e.g., /https://api.example.com/users -> https://api.example.com/users
+    let url = if let Some(path) = uri.path_and_query().map(|pq| pq.as_str()) {
+        extract_url_from_path(path).unwrap_or_else(|| uri.to_string())
+    } else {
+        uri.to_string()
+    };
     
     let headers: Vec<Header> = req
         .headers()
@@ -312,6 +356,32 @@ fn recorded_to_hyper(resp: &RecordedResponse) -> Result<Response<Full<Bytes>>> {
         .map_err(|e| Error::Proxy(format!("Failed to build response: {}", e)))
 }
 
+/// Forward a request, using full URL from request or prepending target_url.
+/// 
+/// This function handles both:
+/// - Requests with full URLs (from path-based extraction)
+/// - Requests with paths that need target_url prepended
+async fn forward_request_smart(
+    client: &reqwest::Client,
+    target_url: Option<&str>,
+    request: &RecordedRequest,
+) -> Result<RecordedResponse> {
+    // Build full URL - use request URL if it's already full, otherwise prepend target
+    let full_url = if request.url.starts_with("http://") || request.url.starts_with("https://") {
+        request.url.clone()
+    } else if let Some(target) = target_url {
+        format!("{}{}", target.trim_end_matches('/'), request.url)
+    } else {
+        return Err(Error::Proxy(format!(
+            "Cannot forward request to '{}': not a full URL and no target configured",
+            request.url
+        )));
+    };
+    
+    forward_request_to_url(client, &full_url, request).await
+}
+
+#[allow(dead_code)]
 async fn forward_request(
     client: &reqwest::Client,
     target_url: &str,
@@ -324,10 +394,19 @@ async fn forward_request(
         format!("{}{}", target_url.trim_end_matches('/'), request.url)
     };
     
+    forward_request_to_url(client, &full_url, request).await
+}
+
+async fn forward_request_to_url(
+    client: &reqwest::Client,
+    full_url: impl reqwest::IntoUrl,
+    request: &RecordedRequest,
+) -> Result<RecordedResponse> {
+    
     let method: reqwest::Method = request.method.parse()
         .unwrap_or(reqwest::Method::GET);
     
-    let mut builder = client.request(method, &full_url);
+    let mut builder = client.request(method, full_url);
     
     // Add headers
     for header in &request.headers {
@@ -428,6 +507,38 @@ mod tests {
         assert_eq!(
             hyper_resp.headers().get("content-type").unwrap(),
             "application/json"
+        );
+    }
+
+    #[test]
+    fn test_extract_url_from_path() {
+        // HTTPS URL in path
+        assert_eq!(
+            extract_url_from_path("/https://api.example.com/users"),
+            Some("https://api.example.com/users".to_string())
+        );
+        
+        // HTTP URL in path
+        assert_eq!(
+            extract_url_from_path("/http://api.example.com/data"),
+            Some("http://api.example.com/data".to_string())
+        );
+        
+        // URL with query string
+        assert_eq!(
+            extract_url_from_path("/https://api.example.com/search?q=test"),
+            Some("https://api.example.com/search?q=test".to_string())
+        );
+        
+        // Regular path (not a full URL)
+        assert_eq!(extract_url_from_path("/api/users"), None);
+        assert_eq!(extract_url_from_path("/"), None);
+        assert_eq!(extract_url_from_path(""), None);
+        
+        // Without leading slash
+        assert_eq!(
+            extract_url_from_path("https://api.example.com/test"),
+            Some("https://api.example.com/test".to_string())
         );
     }
 }

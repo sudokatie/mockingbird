@@ -54,7 +54,7 @@ impl std::str::FromStr for Mode {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_lowercase().as_str() {
             "record" => Ok(Mode::Record),
-            "replay" => Ok(Mode::Replay),
+            "replay" | "playback" => Ok(Mode::Replay),
             "auto" => Ok(Mode::Auto),
             "passthrough" | "pass" => Ok(Mode::Passthrough),
             _ => Err(format!("Invalid mode: {}. Use record, replay, auto, or passthrough", s)),
@@ -107,6 +107,8 @@ mod tests {
     fn test_from_str() {
         assert_eq!("record".parse::<Mode>().unwrap(), Mode::Record);
         assert_eq!("REPLAY".parse::<Mode>().unwrap(), Mode::Replay);
+        assert_eq!("playback".parse::<Mode>().unwrap(), Mode::Replay);
+        assert_eq!("PLAYBACK".parse::<Mode>().unwrap(), Mode::Replay);
         assert_eq!("Auto".parse::<Mode>().unwrap(), Mode::Auto);
         assert_eq!("passthrough".parse::<Mode>().unwrap(), Mode::Passthrough);
         assert_eq!("pass".parse::<Mode>().unwrap(), Mode::Passthrough);

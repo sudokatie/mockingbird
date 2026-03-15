@@ -1,6 +1,7 @@
 //! Error types for mockingbird.
 
 use chrono::{DateTime, Duration, Utc};
+use std::path::PathBuf;
 use thiserror::Error;
 
 /// Result type alias for mockingbird operations.
@@ -27,6 +28,20 @@ pub enum Error {
     /// Cassette format error.
     #[error("Invalid cassette format: {0}")]
     InvalidFormat(String),
+
+    /// Failed to read cassette file.
+    #[error("Failed to read cassette {path}: {source}")]
+    CassetteRead {
+        path: PathBuf,
+        source: std::io::Error,
+    },
+
+    /// Failed to write cassette file.
+    #[error("Failed to write cassette {path}: {source}")]
+    CassetteWrite {
+        path: PathBuf,
+        source: std::io::Error,
+    },
 
     /// Invalid JSON path in filter.
     #[error("Invalid JSON path: {0}")]
@@ -121,6 +136,28 @@ mod tests {
     }
 
     #[test]
+    fn test_cassette_read() {
+        let err = Error::CassetteRead {
+            path: PathBuf::from("/path/to/cassette.json"),
+            source: std::io::Error::new(std::io::ErrorKind::NotFound, "file not found"),
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("cassette"));
+        assert!(msg.contains("/path/to/cassette.json"));
+    }
+
+    #[test]
+    fn test_cassette_write() {
+        let err = Error::CassetteWrite {
+            path: PathBuf::from("/path/to/cassette.json"),
+            source: std::io::Error::new(std::io::ErrorKind::PermissionDenied, "permission denied"),
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("write"));
+        assert!(msg.contains("/path/to/cassette.json"));
+    }
+
+    #[test]
     fn test_proxy_error() {
         let err = Error::Proxy("connection failed".to_string());
         assert!(err.to_string().contains("connection failed"));
@@ -130,5 +167,30 @@ mod tests {
     fn test_config_error() {
         let err = Error::Config("missing field".to_string());
         assert!(err.to_string().contains("missing field"));
+    }
+
+    #[test]
+    fn test_recorded_errors() {
+        let timeout = Error::RecordedTimeout { message: "timed out".to_string() };
+        assert!(timeout.is_recorded_error());
+        assert!(timeout.to_string().contains("timed out"));
+
+        let conn = Error::RecordedConnection { message: "refused".to_string() };
+        assert!(conn.is_recorded_error());
+
+        let dns = Error::RecordedDns { message: "lookup failed".to_string() };
+        assert!(dns.is_recorded_error());
+
+        let tls = Error::RecordedTls { message: "cert invalid".to_string() };
+        assert!(tls.is_recorded_error());
+
+        let cancelled = Error::RecordedCancelled { message: "cancelled".to_string() };
+        assert!(cancelled.is_recorded_error());
+
+        let unknown = Error::RecordedUnknown { message: "unknown".to_string() };
+        assert!(unknown.is_recorded_error());
+
+        // Non-recorded errors
+        assert!(!Error::NoMatch.is_recorded_error());
     }
 }
