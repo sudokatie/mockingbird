@@ -164,7 +164,7 @@ async fn handle_record(
     let recorded_request = hyper_to_recorded(req).await?;
     
     // Use target URL from config, or require full URL in path
-    let target_url = state.target_url.as_ref().map(|s| s.as_str());
+    let target_url = state.target_url.as_deref();
     
     // If URL is already fully qualified (from path extraction), we can use it directly
     let is_full_url = recorded_request.url.starts_with("http://") || recorded_request.url.starts_with("https://");
@@ -225,7 +225,7 @@ async fn handle_auto(
     }
     
     // Fall back to recording - use target URL from config or require full URL in path
-    let target_url = state.target_url.as_ref().map(|s| s.as_str());
+    let target_url = state.target_url.as_deref();
     let is_full_url = recorded_request.url.starts_with("http://") || recorded_request.url.starts_with("https://");
     if !is_full_url && target_url.is_none() {
         return Err(Error::Config(
@@ -260,7 +260,7 @@ async fn handle_passthrough(
 ) -> Result<Response<Full<Bytes>>> {
     let recorded_request = hyper_to_recorded(req).await?;
     
-    let target_url = state.target_url.as_ref().map(|s| s.as_str());
+    let target_url = state.target_url.as_deref();
     let is_full_url = recorded_request.url.starts_with("http://") || recorded_request.url.starts_with("https://");
     if !is_full_url && target_url.is_none() {
         return Err(Error::Config(
